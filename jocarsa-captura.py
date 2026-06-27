@@ -11,6 +11,12 @@ import threading
 import time
 from pathlib import Path
 
+import tkinter as tk
+from tkinter import messagebox
+
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+
 NOMBRE_APP = "jocarsa | captura"
 
 CARPETA_SALIDA = Path.home() / "Videos"
@@ -18,28 +24,17 @@ FPS = 30
 DISPLAY = os.environ.get("DISPLAY", ":1")
 FUENTE_AUDIO = "default"
 ARCHIVO_LISTAS = "listas.txt"
+LOG_BOTONES = "registro_pulsaciones.txt"
 
-PREVISUALIZACION = True
 INTERVALO_PREVISUALIZACION_MS = 1000
-
-INTERVALO_RATON_SEGUNDOS = 1.0
-
-AJUSTE_X_PREVIEW = 32
-AJUSTE_Y_PREVIEW = 32
-AJUSTE_ANCHO_PREVIEW = -64
-SEPARACION_PREVIEW = 0
 
 
 def ejecutar(comando):
     return subprocess.run(comando, text=True, capture_output=True)
 
 
-def limpiar():
-    os.system("clear")
-
-
-def color(texto, codigo):
-    return f"\033[{codigo}m{texto}\033[0m"
+def ahora_txt():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def slugificar(texto):
@@ -52,22 +47,24 @@ def slugificar(texto):
 
 
 def comprobar_dependencias():
-    for programa in ["ffmpeg", "xrandr", "xdotool", "xwininfo"]:
+    for programa in ["ffmpeg", "xrandr", "xdotool"]:
         if ejecutar(["which", programa]).returncode != 0:
-            print(f"Falta {programa}")
-            print("Instala dependencias con:")
-            print(
-                "sudo apt install ffmpeg x11-xserver-utils xdotool x11-utils "
+            messagebox.showerror(
+                NOMBRE_APP,
+                "Falta " + programa + "\n\n"
+                "sudo apt install ffmpeg x11-xserver-utils xdotool "
                 "python3-tk python3-pil python3-pil.imagetk"
             )
             sys.exit(1)
 
     try:
         import pynput  # noqa
+        import PIL  # noqa
     except Exception:
-        print("Falta el módulo Python pynput.")
-        print("Instálalo con:")
-        print("python3 -m pip install pynput")
+        messagebox.showerror(
+            NOMBRE_APP,
+            "Faltan módulos Python.\n\npython3 -m pip install pynput pillow ttkbootstrap"
+        )
         sys.exit(1)
 
 
@@ -97,138 +94,22 @@ def obtener_pantallas():
     return pantallas
 
 
-def seleccionar_pantalla(pantallas):
-    limpiar()
-    print(color("jocarsa | captura", "1;36"))
-    print(color("selección de pantalla", "2;37"))
-    print()
-
-    for p in pantallas:
-        principal = " principal" if "*" in p["marcas"] else ""
-        print(
-            f"{p['numero']}. {p['nombre']} "
-            f"{p['ancho']}x{p['alto']} "
-            f"+{p['x']}+{p['y']}{principal}"
-        )
-
-    print()
-    entrada = input("Selecciona pantalla para grabar [1]: ").strip() or "1"
-
-    try:
-        numero = int(entrada)
-    except ValueError:
-        print("Selección no válida.")
-        sys.exit(1)
-
-    for p in pantallas:
-        if p["numero"] == numero:
-            return p
-
-    print("Selección no válida.")
-    sys.exit(1)
-
-
 def leer_listas():
     ruta = Path(__file__).resolve().parent / ARCHIVO_LISTAS
 
     if not ruta.exists():
-        return []
+        ruta.write_text(
+            "TAME2627-DAM1-Programación\n"
+            "TAME2627-DAM1-Bases de datos\n"
+            "TAME2627-DAM1-Lenguajes de marcas y sistemas de gestión de información\n",
+            encoding="utf-8"
+        )
 
     return [
         linea.strip()
         for linea in ruta.read_text(encoding="utf-8").splitlines()
         if linea.strip()
     ]
-
-
-def seleccionar_lista(listas):
-    if not listas:
-        return None
-
-    limpiar()
-    print(color("jocarsa | captura", "1;36"))
-    print(color("selección de lista", "2;37"))
-    print()
-
-    for i, linea in enumerate(listas, start=1):
-        print(f"{i}. {linea}")
-
-    print()
-    print("Enter = sin lista")
-    entrada = input("Selecciona lista para esta grabación: ").strip()
-
-    if entrada == "":
-        return None
-
-    try:
-        numero = int(entrada)
-    except ValueError:
-        print("Selección no válida.")
-        sys.exit(1)
-
-    if 1 <= numero <= len(listas):
-        return listas[numero - 1]
-
-    print("Selección no válida.")
-    sys.exit(1)
-
-
-def formatear_tiempo(segundos):
-    segundos = int(segundos)
-    h = segundos // 3600
-    m = (segundos % 3600) // 60
-    s = segundos % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-
-def tamano_archivo(ruta):
-    try:
-        mb = ruta.stat().st_size / 1024 / 1024
-    except FileNotFoundError:
-        return "0 MB"
-
-    if mb < 1024:
-        return f"{mb:.1f} MB"
-
-    return f"{mb / 1024:.2f} GB"
-
-
-def obtener_ventana_terminal():
-    if "WINDOWID" in os.environ:
-        return os.environ["WINDOWID"]
-
-    resultado = ejecutar(["xdotool", "getactivewindow"])
-
-    if resultado.returncode == 0 and resultado.stdout.strip():
-        return resultado.stdout.strip()
-
-    return None
-
-
-def obtener_geometria_ventana(window_id):
-    resultado = ejecutar(["xwininfo", "-id", str(window_id)])
-
-    if resultado.returncode != 0:
-        return None
-
-    datos = {}
-
-    patrones = {
-        "x": r"Absolute upper-left X:\s+(-?\d+)",
-        "y": r"Absolute upper-left Y:\s+(-?\d+)",
-        "ancho": r"Width:\s+(\d+)",
-        "alto": r"Height:\s+(\d+)",
-    }
-
-    for clave, patron in patrones.items():
-        m = re.search(patron, resultado.stdout)
-        if m:
-            datos[clave] = int(m.group(1))
-
-    if not all(k in datos for k in ["x", "y", "ancho", "alto"]):
-        return None
-
-    return datos
 
 
 def obtener_posicion_raton():
@@ -278,13 +159,46 @@ def nombre_tecla(key):
     return texto
 
 
+class RelojGrabacion:
+    def __init__(self):
+        self.inicio_real = time.time()
+        self.pausa_inicio = None
+        self.total_pausado = 0.0
+        self.pausado = False
+        self.lock = threading.Lock()
+
+    def pausar(self):
+        with self.lock:
+            if not self.pausado:
+                self.pausado = True
+                self.pausa_inicio = time.time()
+
+    def reanudar(self):
+        with self.lock:
+            if self.pausado:
+                self.total_pausado += time.time() - self.pausa_inicio
+                self.pausa_inicio = None
+                self.pausado = False
+
+    def segundos(self):
+        with self.lock:
+            ahora = time.time()
+            if self.pausado:
+                ahora = self.pausa_inicio
+            return ahora - self.inicio_real - self.total_pausado
+
+    def esta_pausado(self):
+        with self.lock:
+            return self.pausado
+
+
 def escribir_csv_seguro(lock, fichero, linea):
     with lock:
         fichero.write(linea)
         fichero.flush()
 
 
-def iniciar_registro_raton(archivo_csv, inicio, evento_parada):
+def iniciar_registro_raton(archivo_csv, reloj, evento_parada):
     def hilo():
         from pynput import mouse
 
@@ -294,16 +208,17 @@ def iniciar_registro_raton(archivo_csv, inicio, evento_parada):
             f.write("t,event,x,y,button\n")
             f.flush()
 
-            def t():
-                return time.time() - inicio
-
             def on_click(x, y, button, pressed):
+                if reloj.esta_pausado():
+                    return
+
                 evento = "down" if pressed else "up"
                 boton = nombre_boton_raton(button)
+
                 escribir_csv_seguro(
                     lock,
                     f,
-                    f"{t():.3f},{evento},{int(x)},{int(y)},{boton}\n"
+                    f"{reloj.segundos():.3f},{evento},{int(x)},{int(y)},{boton}\n"
                 )
 
             listener = mouse.Listener(on_click=on_click)
@@ -312,20 +227,21 @@ def iniciar_registro_raton(archivo_csv, inicio, evento_parada):
             ultimo_segundo = -1
 
             while not evento_parada.is_set():
-                segundos = int(time.time() - inicio)
+                if not reloj.esta_pausado():
+                    segundos = int(reloj.segundos())
 
-                if segundos != ultimo_segundo:
-                    posicion = obtener_posicion_raton()
+                    if segundos != ultimo_segundo:
+                        posicion = obtener_posicion_raton()
 
-                    if posicion:
-                        x, y = posicion
-                        escribir_csv_seguro(
-                            lock,
-                            f,
-                            f"{time.time() - inicio:.3f},move,{x},{y},\n"
-                        )
+                        if posicion:
+                            x, y = posicion
+                            escribir_csv_seguro(
+                                lock,
+                                f,
+                                f"{reloj.segundos():.3f},move,{x},{y},\n"
+                            )
 
-                    ultimo_segundo = segundos
+                        ultimo_segundo = segundos
 
                 time.sleep(0.1)
 
@@ -334,7 +250,7 @@ def iniciar_registro_raton(archivo_csv, inicio, evento_parada):
     threading.Thread(target=hilo, daemon=True).start()
 
 
-def iniciar_registro_teclado(archivo_csv, inicio, evento_parada):
+def iniciar_registro_teclado(archivo_csv, reloj, evento_parada):
     def hilo():
         from pynput import keyboard
 
@@ -344,21 +260,21 @@ def iniciar_registro_teclado(archivo_csv, inicio, evento_parada):
             f.write("t,event,key\n")
             f.flush()
 
-            def t():
-                return time.time() - inicio
-
             def on_press(key):
+                if reloj.esta_pausado():
+                    return
+
                 tecla = nombre_tecla(key)
-                escribir_csv_seguro(lock, f, f"{t():.3f},down,{tecla}\n")
+                escribir_csv_seguro(lock, f, f"{reloj.segundos():.3f},down,{tecla}\n")
 
             def on_release(key):
-                tecla = nombre_tecla(key)
-                escribir_csv_seguro(lock, f, f"{t():.3f},up,{tecla}\n")
+                if reloj.esta_pausado():
+                    return
 
-            listener = keyboard.Listener(
-                on_press=on_press,
-                on_release=on_release
-            )
+                tecla = nombre_tecla(key)
+                escribir_csv_seguro(lock, f, f"{reloj.segundos():.3f},up,{tecla}\n")
+
+            listener = keyboard.Listener(on_press=on_press, on_release=on_release)
             listener.start()
 
             while not evento_parada.is_set():
@@ -369,230 +285,379 @@ def iniciar_registro_teclado(archivo_csv, inicio, evento_parada):
     threading.Thread(target=hilo, daemon=True).start()
 
 
-def iniciar_previsualizacion(pantalla, evento_parada):
-    def hilo():
-        try:
-            import tkinter as tk
-            from PIL import ImageGrab, ImageTk
-        except Exception:
-            return
+class Grabacion:
+    def __init__(self, pantalla, lista):
+        self.pantalla = pantalla
+        self.lista = lista
+        self.proceso = None
+        self.evento_parada = threading.Event()
+        self.reloj = RelojGrabacion()
+        self.pausado = False
 
-        ventana_terminal = obtener_ventana_terminal()
+    def iniciar(self):
+        CARPETA_SALIDA.mkdir(parents=True, exist_ok=True)
 
-        raiz = tk.Tk()
-        raiz.title("jocarsa | captura - preview")
-        raiz.overrideredirect(True)
-        raiz.attributes("-topmost", True)
-        raiz.resizable(False, False)
+        marca = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        nombre_archivo = f"{marca}-{slugificar(self.lista)}.mp4"
 
-        etiqueta = tk.Label(raiz, bg="black", bd=0, highlightthickness=0)
-        etiqueta.pack(fill="both", expand=True)
+        self.archivo = CARPETA_SALIDA / nombre_archivo
+        self.archivo_raton = self.archivo.with_suffix(".mouse.csv")
+        self.archivo_teclado = self.archivo.with_suffix(".keys.csv")
 
-        bbox = (
-            pantalla["x"],
-            pantalla["y"],
-            pantalla["x"] + pantalla["ancho"],
-            pantalla["y"] + pantalla["alto"],
+        resolucion = f"{self.pantalla['ancho']}x{self.pantalla['alto']}"
+        entrada_video = f"{DISPLAY}+{self.pantalla['x']},{self.pantalla['y']}"
+
+        comando = [
+            "ffmpeg", "-y",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-nostats",
+
+            "-f", "x11grab",
+            "-video_size", resolucion,
+            "-framerate", str(FPS),
+            "-i", entrada_video,
+
+            "-f", "pulse",
+            "-i", FUENTE_AUDIO,
+
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+
+            "-c:a", "aac",
+            "-b:a", "128k",
+
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+
+            str(self.archivo)
+        ]
+
+        self.proceso = subprocess.Popen(
+            comando,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True
         )
 
-        def actualizar():
-            if evento_parada.is_set():
-                try:
-                    raiz.destroy()
-                except Exception:
-                    pass
-                return
+        iniciar_registro_raton(self.archivo_raton, self.reloj, self.evento_parada)
+        iniciar_registro_teclado(self.archivo_teclado, self.reloj, self.evento_parada)
 
-            geometria = obtener_geometria_ventana(ventana_terminal) if ventana_terminal else None
+    def pausar(self):
+        if not self.proceso or self.proceso.poll() is not None or self.pausado:
+            return
 
-            if geometria:
-                ancho_preview = geometria["ancho"] + AJUSTE_ANCHO_PREVIEW
-                alto_preview = int(ancho_preview * pantalla["alto"] / pantalla["ancho"])
+        self.proceso.send_signal(signal.SIGSTOP)
+        self.reloj.pausar()
+        self.pausado = True
 
-                x_preview = geometria["x"] + AJUSTE_X_PREVIEW
-                y_preview = geometria["y"] - alto_preview - SEPARACION_PREVIEW + AJUSTE_Y_PREVIEW
+    def reanudar(self):
+        if not self.proceso or self.proceso.poll() is not None or not self.pausado:
+            return
 
-                if y_preview < 0:
-                    y_preview = geometria["y"] + geometria["alto"] + SEPARACION_PREVIEW + AJUSTE_Y_PREVIEW
-            else:
-                ancho_preview = 800
-                alto_preview = int(ancho_preview * pantalla["alto"] / pantalla["ancho"])
-                x_preview = 40
-                y_preview = 40
+        self.reloj.reanudar()
+        self.proceso.send_signal(signal.SIGCONT)
+        self.pausado = False
 
+    def alternar_pausa(self):
+        if self.pausado:
+            self.reanudar()
+        else:
+            self.pausar()
+
+    def segundos(self):
+        return self.reloj.segundos()
+
+    def esta_grabando(self):
+        return self.proceso is not None and self.proceso.poll() is None and not self.pausado
+
+    def detener(self):
+        if not self.proceso:
+            return
+
+        if self.pausado:
+            self.reanudar()
+
+        self.evento_parada.set()
+
+        if self.proceso.poll() is None:
             try:
-                raiz.geometry(f"{ancho_preview}x{alto_preview}+{x_preview}+{y_preview}")
-
-                imagen = ImageGrab.grab(bbox=bbox)
-                imagen = imagen.resize((ancho_preview, alto_preview))
-                foto = ImageTk.PhotoImage(imagen)
-
-                etiqueta.configure(image=foto)
-                etiqueta.image = foto
-
+                self.proceso.stdin.write("q\n")
+                self.proceso.stdin.flush()
+                self.proceso.wait(timeout=10)
             except Exception:
-                pass
+                try:
+                    self.proceso.send_signal(signal.SIGINT)
+                    self.proceso.wait(timeout=10)
+                except Exception:
+                    self.proceso.kill()
 
-            raiz.after(INTERVALO_PREVISUALIZACION_MS, actualizar)
-
-        actualizar()
-        raiz.mainloop()
-
-    threading.Thread(target=hilo, daemon=True).start()
+        time.sleep(0.3)
 
 
-def pintar_estado(inicio, pantalla, archivo, lista):
-    tiempo = formatear_tiempo(time.time() - inicio)
-    tamano = tamano_archivo(archivo)
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title(NOMBRE_APP)
+        self.root.geometry("620x620")
 
-    etiqueta = f"  {color(lista, '1;35')}" if lista else ""
+        self.cambiando_lista = False
 
-    texto = (
-        f"{color('jocarsa | captura', '1;36')}  "
-        f"{color(tiempo, '1;33')}  "
-        f"{pantalla['nombre']}  "
-        f"{color('REC', '1;31')}  "
-        f"{color('micrófono', '1;32')}  "
-        f"{color('ratón', '1;34')}  "
-        f"{color('teclado', '1;35')}  "
-        f"{color(tamano, '2;37')}"
-        f"{etiqueta}"
-    )
+        self.pantallas = obtener_pantallas()
+        self.listas = leer_listas()
 
-    try:
-        ancho = os.get_terminal_size().columns
-    except OSError:
-        ancho = 120
+        if not self.pantallas:
+            messagebox.showerror(NOMBRE_APP, "No se han detectado pantallas.")
+            self.root.destroy()
+            return
 
-    print("\r" + texto[:ancho - 1].ljust(ancho - 1), end="", flush=True)
+        self.pantalla = self.pantallas[0]
+        self.nombre_activo = None
+        self.inicio_activo = None
+        self.grabacion = None
+
+        self.crear_interfaz()
+        self.root.after(300, self.actualizar_preview_integrado)
+        self.root.protocol("WM_DELETE_WINDOW", self.cerrar)
+
+    def crear_interfaz(self):
+        contenedor = ttk.Frame(self.root, padding=14)
+        contenedor.pack(fill=BOTH, expand=True)
+
+        titulo = ttk.Label(
+            contenedor,
+            text=NOMBRE_APP,
+            font=("Arial", 18, "bold"),
+            bootstyle="info"
+        )
+        titulo.pack(fill=X, pady=(0, 10))
+
+        self.preview_label = tk.Label(
+            contenedor,
+            bg="black",
+            bd=0,
+            highlightthickness=0
+        )
+        self.preview_label.pack(fill=X, pady=(0, 12))
+
+        ttk.Label(contenedor, text="Pantalla", font=("Arial", 10, "bold")).pack(fill=X)
+
+        self.var_pantalla = tk.StringVar(value=self.texto_pantalla(self.pantalla))
+
+        self.combo_pantalla = ttk.Combobox(
+            contenedor,
+            textvariable=self.var_pantalla,
+            values=[self.texto_pantalla(p) for p in self.pantallas],
+            state="readonly"
+        )
+        self.combo_pantalla.pack(fill=X, pady=(0, 12))
+        self.combo_pantalla.bind("<<ComboboxSelected>>", self.cambiar_pantalla)
+
+        ttk.Label(contenedor, text="Lista / asignatura", font=("Arial", 10, "bold")).pack(fill=X)
+
+        self.opcion_sin_grabar = "— sin grabación —"
+        self.var_lista = tk.StringVar(value=self.opcion_sin_grabar)
+
+        self.combo_lista = ttk.Combobox(
+            contenedor,
+            textvariable=self.var_lista,
+            values=[self.opcion_sin_grabar] + self.listas,
+            state="readonly"
+        )
+        self.combo_lista.pack(fill=X, pady=(0, 12))
+        self.combo_lista.bind("<<ComboboxSelected>>", self.cambiar_lista)
+
+        self.estado = ttk.Label(
+            contenedor,
+            text="Sin grabación activa",
+            padding=8,
+            bootstyle="secondary"
+        )
+        self.estado.pack(fill=X, pady=(0, 12))
+
+        barra = ttk.Frame(contenedor)
+        barra.pack(fill=X)
+
+        self.boton_pausa = ttk.Button(
+            barra,
+            text="Pausar",
+            bootstyle="warning",
+            command=self.alternar_pausa
+        )
+        self.boton_pausa.pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+
+        self.boton_stop = ttk.Button(
+            barra,
+            text="Detener grabación",
+            bootstyle="danger",
+            command=self.detener_actual
+        )
+        self.boton_stop.pack(side=LEFT, fill=X, expand=True, padx=(5, 0))
+
+    def actualizar_preview_integrado(self):
+        try:
+            from PIL import ImageGrab, ImageTk, ImageDraw
+
+            bbox = (
+                self.pantalla["x"],
+                self.pantalla["y"],
+                self.pantalla["x"] + self.pantalla["ancho"],
+                self.pantalla["y"] + self.pantalla["alto"],
+            )
+
+            ancho = max(self.preview_label.winfo_width(), 320)
+            alto = int(ancho * self.pantalla["alto"] / self.pantalla["ancho"])
+
+            imagen = ImageGrab.grab(bbox=bbox)
+            imagen = imagen.resize((ancho, alto))
+
+            if self.esta_grabando():
+                draw = ImageDraw.Draw(imagen)
+                r = max(16, min(ancho, alto) // 18)
+                m = max(12, r // 2)
+
+                draw.ellipse(
+                    (ancho - r - m - 3, m - 3, ancho - m + 3, m + r + 3),
+                    fill="black"
+                )
+                draw.ellipse(
+                    (ancho - r - m, m, ancho - m, m + r),
+                    fill="red"
+                )
+
+            foto = ImageTk.PhotoImage(imagen)
+            self.preview_label.configure(image=foto)
+            self.preview_label.image = foto
+
+        except Exception:
+            pass
+
+        self.root.after(INTERVALO_PREVISUALIZACION_MS, self.actualizar_preview_integrado)
+
+    def texto_pantalla(self, p):
+        principal = " principal" if "*" in p["marcas"] else ""
+        return f"{p['nombre']} {p['ancho']}x{p['alto']} +{p['x']}+{p['y']}{principal}"
+
+    def esta_grabando(self):
+        return self.grabacion is not None and self.grabacion.esta_grabando()
+
+    def cambiar_pantalla(self, event=None):
+        valor = self.var_pantalla.get()
+
+        for p in self.pantallas:
+            if self.texto_pantalla(p) == valor:
+                self.pantalla = p
+                break
+
+        if self.nombre_activo:
+            actual = self.nombre_activo
+            self.detener_actual(actualizar_combo=False)
+            self.iniciar_lista(actual)
+
+    def cambiar_lista(self, event=None):
+        if self.cambiando_lista:
+            return
+
+        nueva = self.var_lista.get()
+
+        if nueva == self.nombre_activo:
+            return
+
+        if nueva == self.opcion_sin_grabar:
+            self.detener_actual(actualizar_combo=False)
+            return
+
+        self.iniciar_lista(nueva)
+
+    def escribir_historial(self, inicio, fin, nombre):
+        ruta = Path(__file__).resolve().parent / LOG_BOTONES
+        with ruta.open("a", encoding="utf-8") as f:
+            f.write(f"{inicio} -> {fin} - {nombre}\n")
+
+    def iniciar_lista(self, nombre):
+        fin = ahora_txt()
+
+        if self.nombre_activo is not None:
+            self.escribir_historial(self.inicio_activo, fin, self.nombre_activo)
+            self.parar_grabacion_sin_historial()
+
+        self.nombre_activo = nombre
+        self.inicio_activo = fin
+
+        self.grabacion = Grabacion(self.pantalla, nombre)
+        self.grabacion.iniciar()
+
+        self.boton_pausa.config(text="Pausar", bootstyle="warning")
+        self.actualizar_estado()
+
+    def alternar_pausa(self):
+        if not self.grabacion:
+            return
+
+        self.grabacion.alternar_pausa()
+
+        if self.grabacion.pausado:
+            self.boton_pausa.config(text="Reanudar", bootstyle="success")
+        else:
+            self.boton_pausa.config(text="Pausar", bootstyle="warning")
+
+        self.actualizar_estado()
+
+    def actualizar_estado(self):
+        if not self.grabacion or not self.nombre_activo:
+            self.estado.config(text="Sin grabación activa")
+            return
+
+        segundos = int(self.grabacion.segundos())
+        h = segundos // 3600
+        m = (segundos % 3600) // 60
+        s = segundos % 60
+
+        modo = "PAUSA" if self.grabacion.pausado else "REC"
+
+        self.estado.config(
+            text=f"{modo} {h:02d}:{m:02d}:{s:02d} · {self.nombre_activo} · {self.grabacion.archivo}"
+        )
+
+        self.root.after(500, self.actualizar_estado)
+
+    def parar_grabacion_sin_historial(self):
+        if self.grabacion:
+            self.grabacion.detener()
+            self.grabacion = None
+
+        self.boton_pausa.config(text="Pausar", bootstyle="warning")
+
+    def detener_actual(self, actualizar_combo=True):
+        if self.nombre_activo is None:
+            return
+
+        fin = ahora_txt()
+        self.escribir_historial(self.inicio_activo, fin, self.nombre_activo)
+
+        self.parar_grabacion_sin_historial()
+
+        self.nombre_activo = None
+        self.inicio_activo = None
+        self.estado.config(text="Sin grabación activa")
+
+        if actualizar_combo:
+            self.cambiando_lista = True
+            self.var_lista.set(self.opcion_sin_grabar)
+            self.cambiando_lista = False
+
+    def cerrar(self):
+        self.detener_actual(actualizar_combo=False)
+        self.root.destroy()
 
 
 def main():
     comprobar_dependencias()
-
-    listas = leer_listas()
-    lista = seleccionar_lista(listas)
-
-    pantallas = obtener_pantallas()
-
-    if not pantallas:
-        print("No se han detectado pantallas.")
-        sys.exit(1)
-
-    pantalla = seleccionar_pantalla(pantallas)
-
-    resolucion = f"{pantalla['ancho']}x{pantalla['alto']}"
-    entrada_video = f"{DISPLAY}+{pantalla['x']},{pantalla['y']}"
-
-    CARPETA_SALIDA.mkdir(parents=True, exist_ok=True)
-
-    marca = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    if lista:
-        nombre_archivo = f"{marca}-{slugificar(lista)}.mp4"
-    else:
-        nombre_archivo = f"jocarsa-captura_{marca}.mp4"
-
-    archivo = CARPETA_SALIDA / nombre_archivo
-    archivo_raton = archivo.with_suffix(".mouse.csv")
-    archivo_teclado = archivo.with_suffix(".keys.csv")
-
-    comando = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-nostats",
-
-        "-f", "x11grab",
-        "-video_size", resolucion,
-        "-framerate", str(FPS),
-        "-i", entrada_video,
-
-        "-f", "pulse",
-        "-i", FUENTE_AUDIO,
-
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-
-        "-c:a", "aac",
-        "-b:a", "128k",
-
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-
-        str(archivo)
-    ]
-
-    limpiar()
-    print(color("jocarsa | captura", "1;36"))
-    print()
-    print(f"Pantalla: {pantalla['nombre']} {resolucion}")
-    print(f"Entrada:   {entrada_video}")
-
-    if lista:
-        print(f"Lista:     {lista}")
-
-    print(f"Vídeo:     {archivo}")
-    print(f"Ratón:     {archivo_raton}")
-    print(f"Teclado:   {archivo_teclado}")
-    print()
-    print("Grabando. Pulsa Ctrl+C para detener.")
-    print()
-
-    evento_parada = threading.Event()
-
-    if PREVISUALIZACION:
-        iniciar_previsualizacion(pantalla, evento_parada)
-
-    proceso = subprocess.Popen(
-        comando,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True
-    )
-
-    inicio = time.time()
-
-    iniciar_registro_raton(archivo_raton, inicio, evento_parada)
-    iniciar_registro_teclado(archivo_teclado, inicio, evento_parada)
-
-    try:
-        while proceso.poll() is None:
-            pintar_estado(inicio, pantalla, archivo, lista)
-            time.sleep(0.25)
-
-    except KeyboardInterrupt:
-        print()
-        print(color("Deteniendo grabación correctamente...", "1;33"))
-        evento_parada.set()
-
-        try:
-            proceso.stdin.write("q\n")
-            proceso.stdin.flush()
-            proceso.wait(timeout=10)
-        except Exception:
-            try:
-                proceso.send_signal(signal.SIGINT)
-                proceso.wait(timeout=10)
-            except Exception:
-                proceso.kill()
-
-    evento_parada.set()
-    time.sleep(0.5)
-
-    print()
-    print()
-    print(color("Grabación guardada:", "1;32"))
-    print(archivo)
-
-    print(color("Ratón guardado:", "1;32"))
-    print(archivo_raton)
-
-    print(color("Teclado guardado:", "1;32"))
-    print(archivo_teclado)
+    root = ttk.Window(themename="darkly")
+    App(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":
